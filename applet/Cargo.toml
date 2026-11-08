@@ -1,0 +1,22 @@
+[package]
+name = "cosmic-applet-token-monitor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "COSMIC panel applet showing AI coding plan usage (Claude, Codex)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+tokio = { version = "1", features = ["process", "rt", "time"] }
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic"
+default-features = false
+features = ["applet", "applet-token", "tokio", "wayland"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

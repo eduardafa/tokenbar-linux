@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Token Monitor
+Comment=AI coding plan usage (Claude, Codex) in the panel
+Type=Application
+Exec=@BIN@
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Iced;claude;codex;tokens;usage;
+Icon=utilities-system-monitor-symbolic
+StartupNotify=true
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10

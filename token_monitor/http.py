@@ -1,0 +1,26 @@
+"""Tiny stdlib HTTP helper (no third-party deps)."""
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+
+USER_AGENT = "token-monitor/0.1 (linux)"
+
+
+class HTTPError(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(f"HTTP {status}: {message}")
+        self.status = status
+
+
+def get_json(url: str, headers: dict | None = None, timeout: float = 15):
+    h = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    h.update(headers or {})
+    req = urllib.request.Request(url, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        body = e.read()[:300].decode("utf-8", "replace")
+        raise HTTPError(e.code, body) from None
