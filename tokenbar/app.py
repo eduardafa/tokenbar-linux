@@ -17,7 +17,7 @@ from .providers import fetch_all  # noqa: E402
 from .tray import TrayIcon  # noqa: E402
 from .widgets import ProviderCard  # noqa: E402
 
-AUTOSTART = Path(GLib.get_user_config_dir()) / "autostart" / "token-monitor.desktop"
+AUTOSTART = Path(GLib.get_user_config_dir()) / "autostart" / "tokenbar.desktop"
 
 
 def _short_reset(w) -> str:
@@ -27,7 +27,7 @@ def _short_reset(w) -> str:
 
 
 class MainWindow(Adw.ApplicationWindow):
-    def __init__(self, app: "TokenMonitorApp"):
+    def __init__(self, app: "TokenBarApp"):
         super().__init__(application=app, title=APP_NAME, default_width=420, default_height=640)
         self.app = app
         self.cards: dict[str, ProviderCard] = {}
@@ -41,7 +41,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         menu = Gio.Menu()
         menu.append("Preferences", "app.preferences")
-        menu.append("About Token Monitor", "app.about")
+        menu.append("About TokenBar", "app.about")
         menu.append("Quit", "app.quit")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
 
@@ -89,7 +89,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.empty.set_visible(not shown)
 
 
-class TokenMonitorApp(Adw.Application):
+class TokenBarApp(Adw.Application):
     def __init__(self, start_hidden: bool, use_tray: bool = True, open_prefs: bool = False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.cfg = config.load()
@@ -333,7 +333,7 @@ class TokenMonitorApp(Adw.Application):
         if on:
             AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
             AUTOSTART.write_text(
-                "[Desktop Entry]\nType=Application\nName=Token Monitor\n"
+                "[Desktop Entry]\nType=Application\nName=TokenBar\n"
                 f"Exec={_launcher()} --hidden\nIcon=utilities-system-monitor\n"
                 "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
         elif AUTOSTART.exists():
@@ -341,13 +341,13 @@ class TokenMonitorApp(Adw.Application):
 
 
 def _launcher() -> str:
-    local = Path.home() / ".local" / "bin" / "token-monitor"
-    return str(local) if local.exists() else f"{sys.executable} -m token_monitor"
+    local = Path.home() / ".local" / "bin" / "tokenbar"
+    return str(local) if local.exists() else f"{sys.executable} -m tokenbar"
 
 
 def run() -> int:
     hidden = "--hidden" in sys.argv
     no_tray = "--no-tray" in sys.argv
     prefs = "--preferences" in sys.argv
-    return TokenMonitorApp(start_hidden=hidden and not no_tray and not prefs, use_tray=not no_tray,
+    return TokenBarApp(start_hidden=hidden and not no_tray and not prefs, use_tray=not no_tray,
                            open_prefs=prefs).run(sys.argv[:1])

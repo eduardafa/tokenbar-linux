@@ -1,4 +1,4 @@
-"""Command line: `token-monitor usage [--json]`, `token-monitor` (tray app)."""
+"""Command line: `tokenbar usage [--json]`, `tokenbar` (tray app)."""
 from __future__ import annotations
 
 import argparse
@@ -48,7 +48,7 @@ def print_usage(snaps, color: bool) -> None:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="token-monitor", description="AI coding plan usage monitor")
+    ap = argparse.ArgumentParser(prog="tokenbar", description="AI coding plan usage monitor")
     ap.add_argument("-V", "--version", action="version", version=__version__)
     ap.add_argument("--hidden", action="store_true", help="start in the tray without opening the window")
     ap.add_argument("--no-tray", action="store_true", help="dashboard window only (used by the COSMIC applet)")

@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Token Monitor
+Name=TokenBar
 Comment=AI coding plan usage (Claude, Codex) in the panel
 Type=Application
 Exec=@BIN@

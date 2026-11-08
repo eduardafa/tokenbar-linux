@@ -1,26 +1,42 @@
 #!/usr/bin/env bash
-# Install Token Monitor for the current user (no root needed).
+# Install TokenBar for the current user (no root needed).
 #   ./install.sh              install / update
 #   ./install.sh --autostart  also start it at login
 #   ./install.sh --uninstall  remove everything
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/token-monitor"
-BIN="$HOME/.local/bin/token-monitor"
-DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.eduardafranca.TokenMonitor.desktop"
-AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/token-monitor.desktop"
-APPLET_ID="io.github.eduardafranca.CosmicAppletTokenMonitor"
-APPLET_BIN="$HOME/.local/bin/cosmic-applet-token-monitor"
+PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/tokenbar"
+BIN="$HOME/.local/bin/tokenbar"
+DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.eduardafranca.TokenBar.desktop"
+AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/tokenbar.desktop"
+APPLET_ID="io.github.eduardafranca.CosmicAppletTokenBar"
+APPLET_BIN="$HOME/.local/bin/cosmic-applet-tokenbar"
 APPLET_DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/$APPLET_ID.desktop"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  pkill -f "token_monitor" 2>/dev/null || true
-  pkill -x cosmic-applet-to 2>/dev/null || true
+  pkill -f "python3 -m tokenbar" 2>/dev/null || true
+  pkill -f "^$APPLET_BIN" 2>/dev/null || true
   rm -rf "$PREFIX" "$BIN" "$DESKTOP" "$AUTOSTART" "$APPLET_BIN" "$APPLET_DESKTOP"
-  echo "Token Monitor removed. (Config kept in ~/.config/token-monitor)"
+  echo "TokenBar removed. (Config kept in ~/.config/tokenbar)"
   exit 0
 fi
+
+# Remove the pre-rename install ("Token Monitor"). Each path is checked to be ours first.
+legacy_cleanup() {
+  local bin="$HOME/.local/bin/token-monitor" share="${XDG_DATA_HOME:-$HOME/.local/share}/token-monitor"
+  local apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  grep -qs "python3 -m token_monitor" "$bin" && rm -f "$bin"
+  [[ -f "$share/token_monitor/claude_cost.py" ]] && rm -rf "$share"
+  rm -f "$apps/io.github.eduardafranca.TokenMonitor.desktop" \
+        "$apps/io.github.eduardafranca.CosmicAppletTokenMonitor.desktop" \
+        "$HOME/.local/bin/cosmic-applet-token-monitor"
+  grep -qs "python3 -m token_monitor\|/token-monitor --hidden" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/token-monitor.desktop" \
+    && rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/token-monitor.desktop"
+  [[ -f "${XDG_CACHE_HOME:-$HOME/.cache}/token-monitor/claude-cost-v2.json" ]] && rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/token-monitor"
+  return 0
+}
+legacy_cleanup
 
 if ! python3 -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1"); import cairo; gi.require_foreign("cairo")' 2>/dev/null; then
   echo "Missing GTK 4 / libadwaita / PyGObject / pycairo. Install them with:"
@@ -29,25 +45,25 @@ if ! python3 -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version(
   elif command -v pacman >/dev/null; then echo "  sudo pacman -S python-gobject python-cairo gtk4 libadwaita"
   elif command -v zypper >/dev/null; then echo "  sudo zypper install python3-gobject python3-gobject-cairo typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1"
   else echo "  PyGObject, pycairo, GTK 4 and libadwaita (1.5+) from your distribution"; fi
-  echo "(The command-line part works without them: PYTHONPATH=$SRC python3 -m token_monitor usage)"
+  echo "(The command-line part works without them: PYTHONPATH=$SRC python3 -m tokenbar usage)"
   exit 1
 fi
 
 mkdir -p "$PREFIX" "$(dirname "$BIN")" "$(dirname "$DESKTOP")"
-rm -rf "$PREFIX/token_monitor"
-cp -r "$SRC/token_monitor" "$PREFIX/"
+rm -rf "$PREFIX/tokenbar"
+cp -r "$SRC/tokenbar" "$PREFIX/"
 find "$PREFIX" -name __pycache__ -prune -exec rm -rf {} +
 
 cat > "$BIN" <<EOF
 #!/usr/bin/env bash
-PYTHONPATH="$PREFIX" exec python3 -m token_monitor "\$@"
+PYTHONPATH="$PREFIX" exec python3 -m tokenbar "\$@"
 EOF
 chmod +x "$BIN"
 
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Token Monitor
+Name=TokenBar
 Comment=AI coding plan usage limits and spend
 Exec=$BIN
 Icon=utilities-system-monitor
@@ -58,7 +74,7 @@ EOF
 
 # COSMIC panel applet (Rust). Skipped when cargo isn't available.
 CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
-if [[ -x "$CARGO" && -d "$SRC/applet" && "${TOKEN_MONITOR_NO_APPLET:-}" != 1 ]]; then
+if [[ -x "$CARGO" && -d "$SRC/applet" && "${TOKENBAR_NO_APPLET:-}" != 1 ]]; then
   # libcosmic needs xkbcommon headers. If libxkbcommon-dev isn't installed, unpack it
   # locally (apt download needs no root); the runtime library is already on the system.
   if ! pkg-config --exists xkbcommon && command -v apt >/dev/null; then
@@ -80,10 +96,10 @@ if [[ -x "$CARGO" && -d "$SRC/applet" && "${TOKEN_MONITOR_NO_APPLET:-}" != 1 ]];
   fi
   echo "Building COSMIC applet (first build takes a few minutes)..."
   (cd "$SRC/applet" && "$CARGO" build --release --quiet)
-  install -m755 "$SRC/applet/target/release/cosmic-applet-token-monitor" "$APPLET_BIN.new"
+  install -m755 "$SRC/applet/target/release/cosmic-applet-tokenbar" "$APPLET_BIN.new"
   mv -f "$APPLET_BIN.new" "$APPLET_BIN"   # atomic swap, safe while the panel runs it
   sed "s#@BIN@#$APPLET_BIN#" "$SRC/applet/data/$APPLET_ID.desktop" > "$APPLET_DESKTOP"
-  echo "Applet installed. Add it in Settings > Desktop > Panel > Configure panel applets ('Token Monitor')."
+  echo "Applet installed. Add it in Settings > Desktop > Panel > Configure panel applets ('TokenBar')."
 else
   echo "cargo not found: skipping the COSMIC panel applet (tray icon mode still works)."
 fi
@@ -93,7 +109,7 @@ if [[ "${1:-}" == "--autostart" ]]; then
   cat > "$AUTOSTART" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Token Monitor
+Name=TokenBar
 Exec=$BIN --hidden
 Icon=utilities-system-monitor
 NoDisplay=true
@@ -102,5 +118,5 @@ EOF
   echo "Autostart enabled."
 fi
 
-echo "Installed. Launch 'Token Monitor' from the app library, or run: token-monitor"
-echo "CLI: token-monitor usage [--json]"
+echo "Installed. Launch 'TokenBar' from the app library, or run: tokenbar"
+echo "CLI: tokenbar usage [--json]"

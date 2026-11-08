@@ -1,4 +1,4 @@
-//! Usage data, read from `token-monitor usage --json` (the Python backend).
+//! Usage data, read from `tokenbar usage --json` (the Python backend).
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -180,12 +180,12 @@ pub fn fmt_tokens(n: u64) -> String {
 /// The installed CLI launcher, falling back to PATH.
 pub fn backend() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".local/bin/token-monitor");
+        let p = PathBuf::from(home).join(".local/bin/tokenbar");
         if p.exists() {
             return p;
         }
     }
-    PathBuf::from("token-monitor")
+    PathBuf::from("tokenbar")
 }
 
 pub async fn fetch() -> Result<Vec<Provider>, String> {
@@ -194,10 +194,10 @@ pub async fn fetch() -> Result<Vec<Provider>, String> {
         .kill_on_drop(true)
         .output()
         .await
-        .map_err(|e| format!("Couldn't run token-monitor: {e}. Run ./install.sh."))?;
+        .map_err(|e| format!("Couldn't run tokenbar: {e}. Run ./install.sh."))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().last().unwrap_or("token-monitor failed").to_string());
+        return Err(err.lines().last().unwrap_or("tokenbar failed").to_string());
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("Bad data from token-monitor: {e}"))
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("Bad data from tokenbar: {e}"))
 }

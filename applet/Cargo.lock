@@ -904,7 +904,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmic-applet-token-monitor"
+name = "cosmic-applet-tokenbar"
 version = "0.1.0"
 dependencies = [
  "chrono",

@@ -1,12 +1,12 @@
-"""User configuration stored in ~/.config/token-monitor/config.json."""
+"""User configuration stored in ~/.config/tokenbar/config.json."""
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "token-monitor"
-CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "token-monitor"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "tokenbar"
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tokenbar"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {

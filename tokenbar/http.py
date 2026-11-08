@@ -5,7 +5,7 @@ import json
 import urllib.error
 import urllib.request
 
-USER_AGENT = "token-monitor/0.1 (linux)"
+USER_AGENT = "tokenbar/0.1 (linux)"
 
 
 class HTTPError(Exception):

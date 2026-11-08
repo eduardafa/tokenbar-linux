@@ -15,7 +15,7 @@ use cosmic::Element;
 
 use data::{fmt_duration, fmt_money, fmt_tokens, Pace, Provider, Window};
 
-const APP_ID: &str = "io.github.eduardafranca.CosmicAppletTokenMonitor";
+const APP_ID: &str = "io.github.eduardafranca.CosmicAppletTokenBar";
 static AUTOSIZE_ID: std::sync::LazyLock<widget::Id> =
     std::sync::LazyLock::new(|| widget::Id::new("autosize-main"));
 const REFRESH: Duration = Duration::from_secs(120);
