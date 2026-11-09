@@ -26,7 +26,7 @@ Then add **TokenBar** in *Settings → Desktop → Panel → Configure panel app
 
 Everything installs per user into `~/.local`, with no root. `./install.sh --uninstall` removes it.
 
-**Requirements:** x86_64, Python 3.10+, GTK 4 and libadwaita 1.5+ (Ubuntu 24.04+, Fedora 40+, Arch). The panel applet needs COSMIC.
+See [Where it runs](#where-it-runs) for your distro and desktop.
 
 <details>
 <summary>Build from source</summary>
@@ -39,9 +39,30 @@ git clone https://github.com/eduardafa/tokenbar-linux.git && cd tokenbar-linux
 Building needs the `xkbcommon` headers. On Debian, Ubuntu and Pop!_OS, `install.sh` fetches them without sudo.
 </details>
 
-## Other desktops
+## Where it runs
 
-The panel applet is COSMIC-only. Elsewhere, use the tray icon (KDE, XFCE, Cinnamon, and GNOME with the AppIndicator extension) or the CLI:
+TokenBar has four parts with different requirements:
+
+| | Panel applet | Tray icon | Dashboard window | CLI |
+|---|:-:|:-:|:-:|:-:|
+| **COSMIC**: Pop!_OS 24.04+, Fedora COSMIC, Arch | ✅ | ✅ | ✅ | ✅ |
+| **KDE Plasma** | | ✅ | ✅ | ✅ |
+| **XFCE, Cinnamon, MATE, Budgie** | | ✅ | ✅ | ✅ |
+| **GNOME** (Ubuntu, Fedora Workstation) | | ✅ with the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) | ✅ | ✅ |
+| **Older distros**: Debian 12, Ubuntu 22.04 | | | | ✅ |
+| **macOS** | | | | ⚠️ cost only, use [CodexBar](https://codexbar.app) |
+| **Windows** | | | | ⚠️ untested |
+
+What each part needs:
+
+- **CLI:** Python 3.10+. No other packages.
+- **Dashboard and tray icon:** GTK 4, libadwaita 1.5+, PyGObject and pycairo. That means Ubuntu 24.04+, Fedora 40+, Debian 13+, Arch or openSUSE Tumbleweed. `install.sh` prints the install command for your package manager if anything is missing. The tray icon works on Wayland and X11.
+- **Panel applet:** COSMIC. The prebuilt release binary is x86_64 and needs glibc 2.39+ and `libxkbcommon`, which all current COSMIC distros have. On other CPUs (e.g. ARM), build from source.
+- **On macOS** the Claude limits don't load, because Claude Code keeps its login in the Keychain there. On Linux and probably Windows it keeps the login in a file.
+
+Tested on Pop!_OS 24.04 with COSMIC. The other rows follow from the requirements; reports are welcome.
+
+Without COSMIC, install the tray icon instead of the applet:
 
 ```bash
 TOKENBAR_NO_APPLET=1 ./install.sh --autostart   # tray icon at login
