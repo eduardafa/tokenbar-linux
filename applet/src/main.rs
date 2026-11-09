@@ -37,6 +37,10 @@ struct Applet {
     selected: usize,
     metric: Metric,
     day: Option<usize>,
+    /// `--preview out.png`: render the popup in a normal window, save a screenshot, exit.
+    preview: Option<String>,
+    /// Preview only: 0 = whole popup, 1 = top, 2 = daily cost, 3 = menu (tall popups get clipped).
+    preview_part: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,18 @@ enum Message {
     OpenUrl(String),
     PopupClosed(Id),
     Surface(cosmic::surface::Action<Message>),
+    Capture,
+    Shot(cosmic::iced::window::Screenshot),
+}
+
+fn save_png(path: &str, shot: &cosmic::iced::window::Screenshot) -> std::io::Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut enc = png::Encoder::new(file, shot.size.width, shot.size.height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().map_err(std::io::Error::other)?;
+    w.write_image_data(&shot.rgba).map_err(std::io::Error::other)?;
+    Ok(())
 }
 
 /// Provider brand colours (CodexBar uses the provider colour for bars).
@@ -268,6 +284,14 @@ impl Applet {
         }
 
         // Cost: big Today / Last 30 days figures, then the daily history inline
+        if self.preview_part >= 2 {
+            let part = Column::new().spacing(14).padding([12, 16]);
+            return match (self.preview_part, p.cost.as_ref()) {
+                (2, Some(c)) => part.push(self.daily_section(p, c)),
+                _ => part.push(self.footer(Some(p))),
+            }
+            .into();
+        }
         if let Some(c) = p.cost.as_ref().filter(|c| c.month_tokens > 0) {
             col = col
                 .push(divider::horizontal::default())
@@ -277,7 +301,11 @@ impl Applet {
                         .push(stat("Today", fmt_money(c.today_cost), fmt_tokens(c.today_tokens)))
                         .push(stat("Last 30 days", fmt_money(c.month_cost), fmt_tokens(c.month_tokens))),
                 )
-                .push(self.daily_section(p, c));
+                ;
+            if self.preview_part == 1 {
+                return col.into();
+            }
+            col = col.push(self.daily_section(p, c));
         }
 
         col.push(self.footer(Some(p))).into()
@@ -437,7 +465,7 @@ fn stat<'a>(label: &'a str, value: String, tokens: String) -> Element<'a, Messag
 
 impl cosmic::Application for Applet {
     type Executor = cosmic::executor::Default;
-    type Flags = ();
+    type Flags = Option<String>;
     type Message = Message;
     const APP_ID: &'static str = APP_ID;
 
@@ -449,9 +477,18 @@ impl cosmic::Application for Applet {
         &mut self.core
     }
 
-    fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
+    fn init(mut core: Core, preview: Option<String>) -> (Self, Task<Message>) {
+        if preview.is_some() {
+            core.window.show_headerbar = false;
+        }
         let mut app = Applet {
             core,
+            preview_part: preview
+                .as_ref()
+                .and_then(|_| std::env::var("TOKENBAR_PREVIEW_PART").ok())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            preview,
             popup: None,
             providers: vec![],
             error: None,
@@ -486,6 +523,11 @@ impl cosmic::Application for Applet {
                         if self.selected >= self.providers.len() {
                             self.selected = 0;
                         }
+                        if self.preview.is_some() {
+                            return Task::perform(tokio::time::sleep(Duration::from_millis(1500)), |_| {
+                                cosmic::Action::App(Message::Capture)
+                            });
+                        }
                     }
                     Err(e) => self.error = Some(e),
                 }
@@ -510,11 +552,28 @@ impl cosmic::Application for Applet {
                 }
             }
             Message::Surface(a) => return cosmic::task::message(cosmic::Action::Surface(a)),
+            Message::Capture => {
+                if let Some(id) = self.core.main_window_id() {
+                    return cosmic::iced::window::screenshot(id).map(|s| cosmic::Action::App(Message::Shot(s)));
+                }
+            }
+            Message::Shot(shot) => {
+                if let Some(path) = &self.preview {
+                    match save_png(path, &shot) {
+                        Ok(()) => eprintln!("saved {path} ({}x{})", shot.size.width, shot.size.height),
+                        Err(e) => eprintln!("could not save {path}: {e}"),
+                    }
+                }
+                std::process::exit(0);
+            }
         }
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
+        if self.preview.is_some() {
+            return container(self.popup_view()).class(cosmic::theme::Container::Background).into();
+        }
         let have_popup = self.popup;
         // Same structure as COSMIC's clock applet: text + a spacer that fixes the height.
         let applet = &self.core.applet;
@@ -571,5 +630,16 @@ impl cosmic::Application for Applet {
 }
 
 fn main() -> cosmic::iced::Result {
-    cosmic::applet::run::<Applet>(())
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--preview") {
+        let out = args.get(i + 1).cloned().unwrap_or_else(|| "tokenbar-popup.png".into());
+        let height = args.get(i + 2).and_then(|h| h.parse().ok()).unwrap_or(1200.0);
+        let settings = cosmic::app::Settings::default()
+            .size(cosmic::iced::Size::new(WIDTH, height))
+            .scale_factor(2.0)
+            .resizable(None)
+            .client_decorations(false);
+        return cosmic::app::run::<Applet>(settings, Some(out));
+    }
+    cosmic::applet::run::<Applet>(None)
 }

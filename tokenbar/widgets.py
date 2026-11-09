@@ -288,6 +288,7 @@ class ProviderCard(Gtk.Box):
         for wdg in (self.y_top, self.y_mid, y0):
             axis.append(wdg)
         chart_row.append(axis)
+        chart_row.set_vexpand(False)  # stop the axis label's vexpand from stretching the chart
         self.cost_box.append(chart_row)
 
         x_axis = Gtk.Box()

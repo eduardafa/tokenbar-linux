@@ -2,45 +2,20 @@
 
 **CodexBar-style AI usage monitor for Linux.** See your AI coding plan limits and spend from the panel. Inspired by [CodexBar](https://codexbar.app), which only runs on macOS.
 
-```
- us (intl)   38% · 7%   ◠ ◠ ⚙ …        ← session % · weekly % used, in the top bar
-```
+![TokenBar: session and weekly limits, spend and daily cost by model in the COSMIC panel](docs/hero.png)
 
-Click the number for the popup:
+In the panel, TokenBar shows your session and weekly usage (here `38% · 22%`). Click it for the popup above. Everything also works as a dashboard window, a tray icon on other desktops, and a CLI.
 
-```
-Claude                                   Pro
-you@example.com
-Updated just now
-───────────────────────────────────────────
-Session
-███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-38% used                    Resets in 3h 26m
-Weekly
-███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-7% used                     Resets in 6d 7h
-Pace: Behind (-3%) · Lasts to reset
-───────────────────────────────────────────
-Today              Last 30 days
-$17.64             $23.61
-34.7M tokens       42.7M tokens
+<p align="center">
+  <img src="docs/panel.png" alt="TokenBar in the COSMIC panel" height="32">
+</p>
 
-Daily cost                    [Cost] Tokens
-              ▂                     █   $18
-              █ ▁▁▁                 █    $9
-▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁███▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█    0
-Oct 10           Oct 25           Nov 8
-Nov 8: $17.64 · 34.7M tokens
-▌ Opus 5.5
-  $17.64 · 34.7M tokens
-  in 772 · out 218.5K · cache read 33.6M · write 818.5K
-───────────────────────────────────────────
-  Usage Dashboard
-  Status Page
-  Refresh
-  Open Dashboard…
-  Settings…
-```
+<details>
+<summary>Dashboard window</summary>
+<p align="center"><img src="docs/dashboard.png" alt="TokenBar dashboard window" width="440"></p>
+</details>
+
+<sub>Screenshots use the built-in demo data (`TOKENBAR_DEMO=1`), not a real account.</sub>
 
 ## Features
 
@@ -202,6 +177,8 @@ The applet doesn't fetch anything itself. It runs `tokenbar usage --json`, so al
 Create `tokenbar/providers/<name>.py` with `ID`, `NAME` and `fetch(cfg) -> ProviderSnapshot`, then add it to `ALL` in `providers/__init__.py`. The CLI, dashboard and applet pick it up automatically. Give it a brand colour in `applet/src/main.rs` (`brand()`) and `tokenbar/widgets.py` (`BRAND`).
 
 ### Development
+
+`TOKENBAR_DEMO=1` makes every part show deterministic demo data, which is how the screenshots were made. `cosmic-applet-tokenbar --preview out.png` renders the popup in a normal window, saves a screenshot and exits. Set `TOKENBAR_PREVIEW_PART=1|2|3` to capture it in parts when your screen isn't tall enough.
 
 ```bash
 python3 -m tokenbar usage          # run from the repo, no install

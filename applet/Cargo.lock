@@ -909,6 +909,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "libcosmic",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "tokio",
