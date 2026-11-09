@@ -17,8 +17,8 @@ AI coding plan limits and spend in your Linux panel. A [CodexBar](https://codexb
 Download the latest release and run the installer:
 
 ```bash
-curl -LO https://github.com/eduardafa/tokenbar-linux/releases/latest/download/tokenbar-linux-v0.1.0-x86_64.tar.gz
-tar xzf tokenbar-linux-v0.1.0-x86_64.tar.gz && cd tokenbar-linux-v0.1.0-x86_64
+curl -LO https://github.com/eduardafa/tokenbar-linux/releases/latest/download/tokenbar-linux-x86_64.tar.gz
+tar xzf tokenbar-linux-x86_64.tar.gz && cd tokenbar-linux
 ./install.sh
 ```
 
