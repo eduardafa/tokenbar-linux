@@ -12,7 +12,6 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULTS = {
     "refresh_seconds": 180,
     "providers": {"claude": True, "codex": True},
-    "tray_metric": "session",      # session | weekly | highest
     "show_cost": True,
     "check_status": True,
     "notify_at_percent": [80, 95],  # desktop notifications when a window crosses these

@@ -9,9 +9,10 @@ USER_AGENT = "tokenbar/0.1 (linux)"
 
 
 class HTTPError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, retry_after: int | None = None):
         super().__init__(f"HTTP {status}: {message}")
         self.status = status
+        self.retry_after = retry_after  # seconds, from the Retry-After header
 
 
 def get_json(url: str, headers: dict | None = None, timeout: float = 15):
@@ -23,4 +24,5 @@ def get_json(url: str, headers: dict | None = None, timeout: float = 15):
             return json.load(resp)
     except urllib.error.HTTPError as e:
         body = e.read()[:300].decode("utf-8", "replace")
-        raise HTTPError(e.code, body) from None
+        ra = e.headers.get("Retry-After") if e.headers else None
+        raise HTTPError(e.code, body, int(ra) if ra and ra.isdigit() else None) from None

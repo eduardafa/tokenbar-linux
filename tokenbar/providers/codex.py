@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 
-from .. import status
-from ..http import HTTPError, get_json
-from ..models import ProviderSnapshot, UsageWindow, parse_time, now
+from datetime import datetime, timezone
+
+from .. import apicache, status
+from ..http import get_json
+from ..models import ProviderSnapshot, StatusInfo, UsageWindow, parse_time, now
 
 ID = "codex"
 NAME = "Codex"
@@ -56,17 +58,24 @@ def fetch(cfg: dict) -> ProviderSnapshot:
 
     claims = _jwt_claims(tokens.get("id_token") or "")
     snap.account = claims.get("email")
-    if cfg.get("check_status", True):
+    if cfg.get("check_status", True) and cfg.get("_mode") != "offline":
         snap.status = status.statuspage("https://status.openai.com")
+    if snap.status is None:  # keep the Status Page link even without a status check
+        snap.status = StatusInfo(url="https://status.openai.com")
 
     headers = {"Authorization": f"Bearer {access}"}
     if tokens.get("account_id"):
         headers["ChatGPT-Account-Id"] = tokens["account_id"]
-    try:
-        d = get_json(USAGE_URL, headers)
-    except HTTPError as e:
-        snap.error = "Login rejected. Run `codex` to log in again." if e.status in (401, 403) else str(e)
+    with apicache.store() as db:
+        res = apicache.get(db, "codex.usage", access, 120, lambda: get_json(USAGE_URL, headers),
+                           cfg.get("_mode", "normal"))
+    if res.error:
+        snap.error = "Login rejected. Run `codex` to log in again." if res.status in (401, 403) else res.error
+    d = res.data
+    if d is None:
+        snap.updated_at = None
         return snap
+    snap.updated_at = datetime.fromtimestamp(res.fetched_at, tz=timezone.utc)
 
     snap.plan = (d.get("plan_type") or "").capitalize() or None
     rl = d.get("rate_limit") or {}
@@ -79,5 +88,4 @@ def fetch(cfg: dict) -> ProviderSnapshot:
         snap.credits = "Credits: unlimited"
     elif cr.get("has_credits") or cr.get("balance"):
         snap.credits = f"Credits: {cr.get('balance')} left"
-    snap.updated_at = now()
     return snap

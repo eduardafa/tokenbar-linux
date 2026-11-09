@@ -83,6 +83,8 @@ pub struct Provider {
     #[serde(default)]
     pub id: String,
     pub name: String,
+    /// When the backend last got fresh data (it may serve cached data while rate limited).
+    pub updated_at: Option<DateTime<Utc>>,
     pub account: Option<String>,
     pub plan: Option<String>,
     #[serde(default)]
@@ -95,10 +97,6 @@ pub struct Provider {
 }
 
 impl Provider {
-    pub fn window(&self, key: &str) -> Option<&Window> {
-        self.windows.iter().find(|w| w.key == key)
-    }
-
     pub fn incident(&self) -> Option<&str> {
         self.status
             .as_ref()
@@ -188,9 +186,26 @@ pub fn backend() -> PathBuf {
     PathBuf::from("tokenbar")
 }
 
-pub async fn fetch() -> Result<Vec<Provider>, String> {
+/// How much the backend may hit provider APIs.
+#[derive(Debug, Clone, Copy)]
+pub enum Mode {
+    /// Cached data only (applet start): no API calls.
+    Offline,
+    /// Popup opened: API call unless the backend's 2-minute cache is fresh.
+    Normal,
+    /// Refresh button: ignore the 2-minute cache.
+    Force,
+}
+
+pub async fn fetch(mode: Mode) -> Result<Vec<Provider>, String> {
+    let mut args = vec!["usage", "--json"];
+    match mode {
+        Mode::Offline => args.push("--offline"),
+        Mode::Force => args.push("--refresh"),
+        Mode::Normal => {}
+    }
     let out = tokio::process::Command::new(backend())
-        .args(["usage", "--json"])
+        .args(&args)
         .kill_on_drop(true)
         .output()
         .await

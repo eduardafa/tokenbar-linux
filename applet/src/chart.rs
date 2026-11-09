@@ -108,3 +108,4 @@ impl<Message: Clone> canvas::Program<Message, cosmic::Theme, Renderer> for DayBa
         }
     }
 }
+

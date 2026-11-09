@@ -80,7 +80,7 @@ class ProviderSnapshot:
     cost: Optional[CostSummary] = None
     status: Optional[StatusInfo] = None
     error: Optional[str] = None
-    updated_at: datetime = field(default_factory=now)
+    updated_at: Optional[datetime] = field(default_factory=now)  # None = no data fetched yet
     dashboard_url: Optional[str] = None
 
     def primary(self) -> Optional[UsageWindow]:

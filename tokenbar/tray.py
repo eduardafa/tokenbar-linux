@@ -6,9 +6,10 @@ packages (COSMIC, KDE, and GNOME with the AppIndicator extension all host SNI).
 from __future__ import annotations
 
 import os
-import sys
 
-import cairo
+from pathlib import Path
+
+import gi
 from gi.repository import Gio, GLib
 
 SNI_XML = """
@@ -94,70 +95,46 @@ ITEM_PATH = "/StatusNotifierItem"
 MENU_PATH = "/MenuBar"
 
 
-def _color_for(used: float):
-    if used >= 90:
-        return (0.94, 0.33, 0.31)
-    if used >= 70:
-        return (0.98, 0.74, 0.25)
-    return (1.0, 1.0, 1.0)
+ICON_NAME = "io.github.eduardafranca.TokenBar-symbolic"
 
 
-def _pct_text(p: float | None) -> str:
-    return "–" if p is None else f"{min(999, round(p))}%"
+def _icon_file() -> Path | None:
+    for d in (Path(__file__).resolve().parent.parent / "data" / "icons",
+              Path(GLib.get_user_data_dir()) / "icons" / "hicolor" / "symbolic" / "apps"):
+        if (d / f"{ICON_NAME}.svg").is_file():
+            return d / f"{ICON_NAME}.svg"
+    return None
 
 
-def render_icon(size: int, top: float | None, bottom: float | None, alert: bool,
-                wide: bool = True) -> tuple:
-    """Panel icon. Returns (w, h, ARGB bytes).
-
-    wide:   "18%  4%" — each number with a thin usage bar under it (session, weekly).
-    square: big session number with a usage bar under it.
-    """
-    h = size
-    w = size * 3 if wide else size
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-    cr = cairo.Context(surf)
-    cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    s = h / 24.0
-
-    def segment(x, width, pct, font_px, percent_sign=True):
-        text = _pct_text(pct) if percent_sign else ("–" if pct is None else str(round(pct)))
-        cr.set_font_size(font_px)
-        ext = cr.text_extents(text)
-        if ext.width > width:  # shrink to fit
-            cr.set_font_size(font_px * width / ext.width)
-            ext = cr.text_extents(text)
-        cr.set_source_rgb(*(_color_for(pct) if pct is not None else (1, 1, 1)))
-        cr.move_to(x + (width - ext.width) / 2 - ext.x_bearing, 15.5 * s)
-        cr.show_text(text)
-        # usage bar
-        by, bh = 18.5 * s, 3.5 * s
-        cr.set_source_rgba(1, 1, 1, 0.35)
-        _rounded(cr, x + s, by, width - 2 * s, bh, bh / 2)
-        cr.fill()
-        if pct:
-            cr.set_source_rgb(*_color_for(pct))
-            _rounded(cr, x + s, by, max(bh, (width - 2 * s) * min(100, pct) / 100), bh, bh / 2)
-            cr.fill()
-
-    if wide:
-        gap = 4 * s
-        seg = (w - gap) / 2
-        segment(0, seg, top, 15 * s)
-        segment(seg + gap, seg, bottom, 15 * s)
-    else:
-        segment(0, w, top, 19 * s, percent_sign=False)
-    if alert:  # status-page incident dot
-        cr.set_source_rgb(0.94, 0.33, 0.31)
-        cr.arc(w - 3 * s, 3 * s, 3 * s, 0, 6.2832)
-        cr.fill()
-    surf.flush()
-    data = bytes(surf.get_data())
-    if sys.byteorder == "little":  # cairo BGRA (native) -> SNI ARGB (network order)
-        out = bytearray(len(data))
-        out[0::4], out[1::4], out[2::4], out[3::4] = data[3::4], data[2::4], data[1::4], data[0::4]
-        data = bytes(out)
-    return (w, h, data)
+def icon_pixmaps() -> list:
+    """White renderings of the symbolic SVG, for tray hosts that ignore IconName."""
+    path = _icon_file()
+    if not path:
+        return []
+    try:
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+        svg = path.read_text().replace("#2e3436", "#ffffff").encode()
+        out = []
+        for size in (22, 44):
+            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+            loader.set_size(size, size)
+            loader.write(svg)
+            loader.close()
+            pb = loader.get_pixbuf()
+            if not pb.get_has_alpha():
+                pb = pb.add_alpha(False, 0, 0, 0)
+            px, stride = pb.get_pixels(), pb.get_rowstride()
+            argb = bytearray()
+            for y in range(size):  # RGBA rows -> ARGB (network byte order)
+                row = px[y * stride: y * stride + size * 4]
+                for x in range(0, size * 4, 4):
+                    r, g, b, a = row[x:x + 4]
+                    argb += bytes((a, r, g, b))
+            out.append((size, size, bytes(argb)))
+        return out
+    except Exception:
+        return []
 
 
 def _later(fn):
@@ -165,26 +142,16 @@ def _later(fn):
     GLib.idle_add(lambda: (fn(), False)[1])
 
 
-def _rounded(cr, x, y, w, h, r):
-    r = min(r, w / 2, h / 2)
-    cr.new_sub_path()
-    cr.arc(x + w - r, y + r, r, -1.5708, 0)
-    cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
-    cr.arc(x + r, y + h - r, r, 1.5708, 3.1416)
-    cr.arc(x + r, y + r, r, 3.1416, 4.7124)
-    cr.close_path()
-
-
 class TrayIcon:
     """menu_items: list of dicts {id?, label, enabled?, callback?} or {"separator": True}."""
 
-    def __init__(self, app_id: str, title: str, on_activate):
+    def __init__(self, app_id: str, title: str, on_activate, on_menu_open=None):
         self.app_id = app_id
         self.title = title
         self.on_activate = on_activate
+        self.on_menu_open = on_menu_open
         self.tooltip = (title, "")
-        self.wide = False  # COSMIC squeezes tray icons into a square
-        self.pixmaps = self._render(None, None, False)
+        self.pixmaps = icon_pixmaps()
         self.items: list[dict] = []
         self.callbacks: dict[int, callable] = {}
         self.revision = 1
@@ -223,13 +190,6 @@ class TrayIcon:
             Gio.bus_unwatch_name(self._watch_id)
 
     # ---------- public updates ----------
-    def set_meter(self, top, bottom, alert=False):
-        self.pixmaps = self._render(top, bottom, alert)
-        self._emit(ITEM_PATH, "org.kde.StatusNotifierItem", "NewIcon")
-
-    def _render(self, top, bottom, alert):
-        return [render_icon(sz, top, bottom, alert, self.wide) for sz in (24, 48)]
-
     def set_tooltip(self, title: str, body: str):
         self.tooltip = (title, body)
         self._emit(ITEM_PATH, "org.kde.StatusNotifierItem", "NewToolTip")
@@ -258,7 +218,7 @@ class TrayIcon:
             "Title": GLib.Variant("s", self.title),
             "Status": GLib.Variant("s", "Active"),
             "WindowId": GLib.Variant("i", 0),
-            "IconName": GLib.Variant("s", ""),
+            "IconName": GLib.Variant("s", ICON_NAME),
             "AttentionIconName": GLib.Variant("s", ""),
             "IconPixmap": GLib.Variant("a(iiay)", self.pixmaps),
             "ToolTip": GLib.Variant("(sa(iiay)ss)", ("", [], self.tooltip[0], self.tooltip[1])),
@@ -328,6 +288,8 @@ class TrayIcon:
                     _later(self.callbacks[i])
             invocation.return_value(GLib.Variant("(ai)", ([],)))
         elif method == "AboutToShow":
+            if params.unpack()[0] == 0 and self.on_menu_open:  # root menu is opening
+                _later(self.on_menu_open)
             invocation.return_value(GLib.Variant("(b)", (False,)))
         elif method == "AboutToShowGroup":
             invocation.return_value(GLib.Variant("(aiai)", ([], [])))

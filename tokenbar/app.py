@@ -34,7 +34,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         header = Adw.HeaderBar()
         self.refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh now")
-        self.refresh_btn.connect("clicked", lambda *_: app.refresh())
+        self.refresh_btn.connect("clicked", lambda *_: app.refresh("force"))
         self.spinner = Gtk.Spinner()
         header.pack_start(self.refresh_btn)
         header.pack_start(self.spinner)
@@ -109,7 +109,7 @@ class TokenBarApp(Adw.Application):
         if self.use_tray:
             self.hold()  # stay alive with no window
         for name, cb in (("preferences", self.show_preferences), ("about", self.show_about),
-                         ("quit", self.quit_app), ("refresh", lambda *_: self.refresh())):
+                         ("quit", self.quit_app), ("refresh", lambda *_: self.refresh("force"))):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda *_a, cb=cb: cb())
             self.add_action(act)
@@ -117,7 +117,7 @@ class TokenBarApp(Adw.Application):
         self.set_accels_for_action("app.refresh", ["<Ctrl>r", "F5"])
 
         if self.use_tray:
-            self.tray = TrayIcon(APP_ID, APP_NAME, self.toggle_window)
+            self.tray = TrayIcon(APP_ID, APP_NAME, self.toggle_window, on_menu_open=self.refresh)
             try:
                 self.tray.start()
             except Exception as e:  # no session bus / tray host: dashboard still works
@@ -125,7 +125,7 @@ class TokenBarApp(Adw.Application):
                 self.tray = None
         self._update_tray()
         self._schedule()
-        self.refresh()
+        self.refresh("offline")  # cached data only; the API is called when you open the window
 
     def do_activate(self):
         if self.start_hidden and self.tray:
@@ -149,6 +149,7 @@ class TokenBarApp(Adw.Application):
             self.window.update(self.snaps)
             self.window.set_loading(self._loading)
         self.window.present()
+        self.refresh()  # opening the window fetches (the backend's 2-minute cache prevents spamming)
 
     def toggle_window(self):
         if self.window and self.window.get_visible() and self.window.is_active():
@@ -161,9 +162,11 @@ class TokenBarApp(Adw.Application):
         if self._timer:
             GLib.source_remove(self._timer)
         secs = max(60, int(self.cfg.get("refresh_seconds", 180)))
-        self._timer = GLib.timeout_add_seconds(secs, lambda: (self.refresh(), True)[1])
+        # Periodic updates only re-read the cache (local logs + last API response): no API calls.
+        self._timer = GLib.timeout_add_seconds(secs, lambda: (self.refresh("offline"), True)[1])
 
-    def refresh(self):
+    def refresh(self, mode: str = "normal"):
+        """mode: "offline" (cache only), "normal" (2-minute cache), "force" (manual refresh)."""
         if self._loading:
             return
         self._loading = True
@@ -172,7 +175,7 @@ class TokenBarApp(Adw.Application):
         cfg = dict(self.cfg)
 
         def work():
-            snaps = fetch_all(cfg)
+            snaps = fetch_all(cfg, mode)
             GLib.idle_add(self._apply, snaps)
 
         threading.Thread(target=work, daemon=True).start()
@@ -192,27 +195,6 @@ class TokenBarApp(Adw.Application):
         if not self.tray:
             return
         shown = [s for s in self.snaps if s.available]
-        metric = self.cfg.get("tray_metric", "session")
-
-        def win(s, key):
-            return next((w for w in s.windows if w.key == key), None)
-
-        top = bottom = None
-        with_windows = [s for s in shown if s.windows]
-        if with_windows:
-            if metric == "highest":
-                top = max(w.used_percent for s in with_windows for w in s.windows if w.key == "session") \
-                    if any(win(s, "session") for s in with_windows) else None
-                weekly = [w.used_percent for s in with_windows for w in s.windows if w.key == "weekly"]
-                bottom = max(weekly) if weekly else None
-            else:
-                p = with_windows[0]
-                first, second = (("weekly", "session") if metric == "weekly" else ("session", "weekly"))
-                top = win(p, first).used_percent if win(p, first) else None
-                bottom = win(p, second).used_percent if win(p, second) else None
-        alert = any(s.status and s.status.indicator not in ("none", "") for s in shown)
-        self.tray.set_meter(top, bottom, alert)
-
         items, tip = [], []
         for s in shown:
             items.append({"label": s.name + (f" · {s.plan}" if s.plan else ""), "enabled": False})
@@ -235,7 +217,7 @@ class TokenBarApp(Adw.Application):
                        "enabled": False}, {"separator": True}]
         items += [
             {"label": "Open Dashboard", "callback": self.show_window},
-            {"label": "Refresh Now", "callback": self.refresh},
+            {"label": "Refresh Now", "callback": lambda: self.refresh("force")},
             {"label": "Preferences…", "callback": self.show_preferences},
             {"separator": True},
             {"label": "Quit", "callback": self.quit_app},
@@ -264,7 +246,7 @@ class TokenBarApp(Adw.Application):
 
     def show_about(self):
         Adw.AboutDialog(
-            application_name=APP_NAME, version=__version__, application_icon="utilities-system-monitor",
+            application_name=APP_NAME, version=__version__, application_icon="io.github.eduardafranca.TokenBar",
             developer_name="Eduarda França", license_type=Gtk.License.MIT_X11,
             comments="Usage limits, reset countdowns and spend for AI coding plans, in your Pop!_OS panel.",
         ).present(self._parent())
@@ -281,13 +263,6 @@ class TokenBarApp(Adw.Application):
         interval.set_value(max(60, self.cfg["refresh_seconds"]) // 60)
         interval.connect("notify::value", lambda r, _p: self._set("refresh_seconds", int(r.get_value()) * 60))
         general.add(interval)
-
-        metrics = ["session", "weekly", "highest"]
-        tray = Adw.ComboRow(title="Panel icon shows", subtitle="Which % used is shown as the number in the panel",
-                            model=Gtk.StringList.new(["Session", "Weekly", "Highest across providers"]))
-        tray.set_selected(metrics.index(self.cfg.get("tray_metric", "session")))
-        tray.connect("notify::selected", lambda r, _p: self._set("tray_metric", metrics[r.get_selected()]))
-        general.add(tray)
 
         login = Adw.SwitchRow(title="Start at login", active=AUTOSTART.exists())
         login.connect("notify::active", lambda r, _p: self._set_autostart(r.get_active()))
@@ -319,8 +294,6 @@ class TokenBarApp(Adw.Application):
         config.save(self.cfg)
         if key == "refresh_seconds":
             self._schedule()
-        elif key == "tray_metric":
-            self._update_tray()
         else:
             self.refresh()
 
@@ -334,7 +307,7 @@ class TokenBarApp(Adw.Application):
             AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
             AUTOSTART.write_text(
                 "[Desktop Entry]\nType=Application\nName=TokenBar\n"
-                f"Exec={_launcher()} --hidden\nIcon=utilities-system-monitor\n"
+                f"Exec={_launcher()} --hidden\nIcon=io.github.eduardafranca.TokenBar\n"
                 "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
         elif AUTOSTART.exists():
             AUTOSTART.unlink()

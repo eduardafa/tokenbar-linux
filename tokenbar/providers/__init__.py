@@ -10,7 +10,9 @@ from . import claude, codex
 ALL = [claude, codex]
 
 
-def fetch_all(cfg: dict) -> list[ProviderSnapshot]:
+def fetch_all(cfg: dict, mode: str = "normal") -> list[ProviderSnapshot]:
+    """mode: "offline" (cached data only, no API calls), "normal", or "force" (manual refresh)."""
+    cfg = dict(cfg, _mode=mode)
     if os.environ.get("TOKENBAR_DEMO") == "1" or cfg.get("demo"):
         from ..demo import snapshots
         return snapshots()

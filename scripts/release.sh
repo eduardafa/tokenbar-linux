@@ -19,11 +19,12 @@ LIBDIR="$ROOT/applet/.deps/root/usr/lib/$ARCH-linux-gnu/pkgconfig"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 OUT="$STAGE/$DIR"
-mkdir -p "$OUT/bin" "$OUT/applet/data"
+mkdir -p "$OUT/bin" "$OUT/applet/data" "$OUT/data"
 cp -r "$ROOT/tokenbar" "$OUT/"
 find "$OUT/tokenbar" -name __pycache__ -prune -exec rm -rf {} +
 cp "$ROOT/install.sh" "$ROOT/README.md" "$ROOT/LICENSE" "$OUT/"
 cp "$ROOT"/applet/data/*.desktop "$OUT/applet/data/"
+cp -r "$ROOT/data/icons" "$OUT/data/"
 install -m755 "$ROOT/applet/target/release/cosmic-applet-tokenbar" "$OUT/bin/"
 
 mkdir -p "$ROOT/dist"

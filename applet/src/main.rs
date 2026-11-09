@@ -8,18 +8,18 @@ use std::time::{Duration, Instant};
 
 use cosmic::app::{Core, Task};
 use cosmic::iced::window::Id;
-use cosmic::iced::{Alignment, Color, Length, Rectangle, Subscription};
+use cosmic::iced::{Alignment, Color, Length, Rectangle, Subscription, Vector};
 use cosmic::surface::action::{app_popup, destroy_popup};
 use cosmic::widget::{self, button, container, divider, text, Column, Row};
 use cosmic::Element;
 
-use data::{fmt_duration, fmt_money, fmt_tokens, Pace, Provider, Window};
+use data::{fmt_duration, fmt_money, fmt_tokens, Mode, Pace, Provider, Window};
 
 const APP_ID: &str = "io.github.eduardafranca.CosmicAppletTokenBar";
 static AUTOSIZE_ID: std::sync::LazyLock<widget::Id> =
     std::sync::LazyLock::new(|| widget::Id::new("autosize-main"));
-const REFRESH: Duration = Duration::from_secs(120);
 const WIDTH: f32 = 340.0;
+const ICON_SVG: &[u8] = include_bytes!("../../data/icons/io.github.eduardafranca.TokenBar-panel.svg");
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Metric {
@@ -45,7 +45,7 @@ struct Applet {
 
 #[derive(Debug, Clone)]
 enum Message {
-    Tick,
+    TogglePopup(Vector, Rectangle),
     Refresh,
     Loaded(Result<Vec<Provider>, String>),
     SelectProvider(usize),
@@ -53,9 +53,9 @@ enum Message {
     HoverDay(usize),
     OpenDashboard,
     OpenSettings,
+    Quit,
     OpenUrl(String),
     PopupClosed(Id),
-    Surface(cosmic::surface::Action<Message>),
     Capture,
     Shot(cosmic::iced::window::Screenshot),
 }
@@ -147,47 +147,58 @@ fn spawn_detached(cmd: &str) {
 }
 
 impl Applet {
-    fn load(&mut self) -> Task<Message> {
+    fn load(&mut self, mode: Mode) -> Task<Message> {
         if self.loading {
             return Task::none();
         }
         self.loading = true;
-        Task::perform(data::fetch(), |r| cosmic::Action::App(Message::Loaded(r)))
+        Task::perform(data::fetch(mode), |r| cosmic::Action::App(Message::Loaded(r)))
+    }
+
+    fn open_popup(&mut self, offset: Vector, bounds: Rectangle) -> Task<Message> {
+        let popup = app_popup::<Applet>(
+            |_| Default::default(),
+            move |state: &mut Applet| {
+                let new_id = Id::unique();
+                state.popup = Some(new_id);
+                let mut s = state.core.applet.get_popup_settings(
+                    state.core.main_window_id().unwrap(),
+                    new_id,
+                    None,
+                    None,
+                    None,
+                );
+                s.positioner.anchor_rect = Rectangle {
+                    x: (bounds.x - offset.x) as i32,
+                    y: (bounds.y - offset.y) as i32,
+                    width: bounds.width as i32,
+                    height: bounds.height as i32,
+                };
+                s
+            },
+            Some(Box::new(|state: &Applet| {
+                Element::from(state.core.applet.popup_container(state.popup_view())).map(cosmic::Action::App)
+            })),
+        );
+        // Opening the popup is when we talk to the provider APIs.
+        Task::batch([cosmic::task::message(cosmic::Action::Surface(popup)), self.load(Mode::Normal)])
     }
 
     fn current(&self) -> Option<&Provider> {
         self.providers.get(self.selected).or_else(|| self.providers.first())
     }
 
-    /// Text shown in the panel, e.g. "21% · 4%".
-    fn panel_label(&self) -> String {
-        if let Some(p) = self.providers.iter().find(|p| !p.windows.is_empty()) {
-            let pct = |k: &str| p.window(k).map(|w| format!("{:.0}%", w.used_percent));
-            let parts: Vec<String> = [pct("session"), pct("weekly")].into_iter().flatten().collect();
-            let label = if parts.is_empty() {
-                format!("{:.0}%", p.windows[0].used_percent)
-            } else {
-                parts.join(" · ")
-            };
-            let hot = p.windows.iter().any(|w| w.used_percent >= 90.0);
-            let incident = self.providers.iter().any(|p| p.incident().is_some());
-            return format!("{}{}", if hot || incident { "⚠ " } else { "" }, label);
+    fn updated_label(&self, p: &Provider) -> String {
+        if self.loading {
+            return "Refreshing…".into();
         }
-        if self.loading && self.updated.is_none() {
-            "…".into()
-        } else {
-            "AI –".into()
-        }
-    }
-
-    fn updated_label(&self) -> String {
-        match (self.loading, self.updated) {
-            (true, _) => "Refreshing…".into(),
-            (_, Some(t)) if t.elapsed().as_secs() >= 60 => {
-                format!("Updated {} ago", fmt_duration(t.elapsed().as_secs() as i64))
-            }
-            (_, Some(_)) => "Updated just now".into(),
-            _ => String::new(),
+        // Prefer the backend's fetch time: it can serve cached data while rate limited.
+        // None = nothing fetched yet (e.g. rate limited before the first fetch).
+        let age = p.updated_at.map(|t| (chrono::Utc::now() - t).num_seconds());
+        match age {
+            Some(s) if s >= 60 => format!("Updated {} ago", fmt_duration(s)),
+            Some(_) => "Updated just now".into(),
+            None => String::new(),
         }
     }
 
@@ -243,17 +254,22 @@ impl Applet {
         if let Some(acc) = &p.account {
             header = header.push(text::body(acc.clone()));
         }
-        col = col.push(header.push(secondary(self.updated_label())));
+        let updated = self.updated_label(p);
+        if !updated.is_empty() {
+            header = header.push(secondary(updated));
+        }
+        col = col.push(header);
         if let Some(inc) = p.incident() {
             col = col.push(text::body(format!("⚠ {inc}")));
         }
         if let Some(e) = &p.error {
             col = col.push(secondary(e.clone()));
         }
-        col = col.push(divider::horizontal::default());
 
-        // usage windows
+        // usage windows. Each section adds its own leading divider, so a section that's
+        // missing (e.g. no limits while rate limited) doesn't leave two dividers in a row.
         if !p.windows.is_empty() {
+            col = col.push(divider::horizontal::default());
             let mut windows = Column::new().spacing(16);
             for w in &p.windows {
                 let mut wc = Column::new()
@@ -314,15 +330,16 @@ impl Applet {
     fn footer<'a>(&'a self, p: Option<&'a Provider>) -> Element<'a, Message> {
         let mut items = Column::new().spacing(0);
         if let Some(url) = p.and_then(|p| p.dashboard_url.clone()) {
-            items = items.push(menu_item("view-paged-symbolic", "Usage Dashboard", Message::OpenUrl(url)));
+            items = items.push(menu_item("web-browser-symbolic", "Usage Dashboard", Message::OpenUrl(url)));
         }
         if let Some(url) = p.and_then(|p| p.status.as_ref()).map(|s| s.url.clone()).filter(|u| !u.is_empty()) {
             items = items.push(menu_item("network-transmit-receive-symbolic", "Status Page", Message::OpenUrl(url)));
         }
         items = items
             .push(menu_item("view-refresh-symbolic", "Refresh", Message::Refresh))
-            .push(menu_item("utilities-system-monitor-symbolic", "Open Dashboard…", Message::OpenDashboard))
-            .push(menu_item("emblem-system-symbolic", "Settings…", Message::OpenSettings));
+            .push(menu_item("utilities-system-monitor-symbolic", "Open Dashboard", Message::OpenDashboard))
+            .push(menu_item("emblem-system-symbolic", "Settings", Message::OpenSettings))
+            .push(menu_item("application-exit-symbolic", "Quit", Message::Quit));
         Column::new().spacing(6).push(divider::horizontal::default()).push(items).into()
     }
 
@@ -498,7 +515,7 @@ impl cosmic::Application for Applet {
             metric: Metric::Cost,
             day: None,
         };
-        let task = app.load();
+        let task = app.load(Mode::Offline); // last known values for the icon, no API call
         (app, task)
     }
 
@@ -507,12 +524,18 @@ impl cosmic::Application for Applet {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        cosmic::iced::time::every(REFRESH).map(|_| Message::Tick)
+        Subscription::none() // no polling: the API is called on click / Refresh only
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Tick | Message::Refresh => return self.load(),
+            Message::Refresh => return self.load(Mode::Force),
+            Message::TogglePopup(offset, bounds) => {
+                return match self.popup.take() {
+                    Some(id) => cosmic::task::message(cosmic::Action::Surface(destroy_popup(id))),
+                    None => self.open_popup(offset, bounds),
+                };
+            }
             Message::Loaded(res) => {
                 self.loading = false;
                 match res {
@@ -545,13 +568,15 @@ impl cosmic::Application for Applet {
                 spawn_detached(&format!("'{}' --no-tray --preferences", data::backend().display()));
             }
             Message::OpenUrl(url) => spawn_detached(&format!("xdg-open '{url}'")),
+            // The panel doesn't restart an applet that exits on its own; it comes back at the
+            // next login, or by removing and re-adding it in Settings > Desktop > Panel.
+            Message::Quit => std::process::exit(0),
             Message::PopupClosed(id) => {
                 if self.popup == Some(id) {
                     self.popup = None;
                     self.day = None;
                 }
             }
-            Message::Surface(a) => return cosmic::task::message(cosmic::Action::Surface(a)),
             Message::Capture => {
                 if let Some(id) = self.core.main_window_id() {
                     return cosmic::iced::window::screenshot(id).map(|s| cosmic::Action::App(Message::Shot(s)));
@@ -574,48 +599,16 @@ impl cosmic::Application for Applet {
         if self.preview.is_some() {
             return container(self.popup_view()).class(cosmic::theme::Container::Background).into();
         }
-        let have_popup = self.popup;
-        // Same structure as COSMIC's clock applet: text + a spacer that fixes the height.
+        // Full-colour app tile (not symbolic), so it keeps its background in the panel. The SVG is
+        // a 20px tile with the 16px pixel cat centred; drawing it at the symbolic size + 4 (20px on
+        // a medium panel) keeps every art pixel on one screen pixel.
         let applet = &self.core.applet;
-        let height = applet.suggested_size(true).1 + 2 * applet.suggested_padding(true).1;
-        let content = Row::new()
-            .align_y(Alignment::Center)
-            .push(applet.text(self.panel_label()))
-            .push(container(widget::space().height(Length::Fixed(f32::from(height)))));
-        let btn = button::custom(content)
-            .padding([0, applet.suggested_padding(true).0])
-            .class(cosmic::theme::Button::AppletIcon)
-            .on_press_with_rectangle(move |offset, bounds| {
-                if let Some(id) = have_popup {
-                    Message::Surface(destroy_popup(id))
-                } else {
-                    Message::Surface(app_popup::<Applet>(
-                        |_| Default::default(),
-                        move |state: &mut Applet| {
-                            let new_id = Id::unique();
-                            state.popup = Some(new_id);
-                            let mut s = state.core.applet.get_popup_settings(
-                                state.core.main_window_id().unwrap(),
-                                new_id,
-                                None,
-                                None,
-                                None,
-                            );
-                            s.positioner.anchor_rect = Rectangle {
-                                x: (bounds.x - offset.x) as i32,
-                                y: (bounds.y - offset.y) as i32,
-                                width: bounds.width as i32,
-                                height: bounds.height as i32,
-                            };
-                            s
-                        },
-                        Some(Box::new(|state: &Applet| {
-                            Element::from(state.core.applet.popup_container(state.popup_view()))
-                                .map(cosmic::Action::App)
-                        })),
-                    ))
-                }
-            });
+        let (w, h) = applet.suggested_size(true);
+        let (w, h) = (w + 4, h + 4);
+        let icon = widget::icon(widget::icon::from_svg_bytes(ICON_SVG))
+            .width(Length::Fixed(f32::from(w)))
+            .height(Length::Fixed(f32::from(h)));
+        let btn = applet.button_from_element(icon, false).on_press_with_rectangle(Message::TogglePopup);
 
         widget::autosize::autosize(btn, AUTOSIZE_ID.clone()).into()
     }

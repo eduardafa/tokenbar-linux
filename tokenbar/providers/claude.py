@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import claude_cost, status
-from ..http import HTTPError, get_json
-from ..models import ProviderSnapshot, UsageWindow, parse_time, now
+from .. import apicache, claude_cost, status
+from ..http import get_json
+from ..models import ProviderSnapshot, StatusInfo, UsageWindow, parse_time
 
 ID = "claude"
 NAME = "Claude"
@@ -29,7 +30,8 @@ WINDOWS = [
     ("seven_day_sonnet", "weekly_sonnet", "Weekly · Sonnet", 7 * 86400),
 ]
 
-_profile_cache: dict = {"at": 0.0, "data": None, "token": None}
+USAGE_TTL = 120          # seconds; shared by every process (both applets, CLI, dashboard)
+PROFILE_TTL = 24 * 3600  # email and plan rarely change
 
 
 def _credentials_path() -> Path | None:
@@ -64,8 +66,10 @@ def fetch(cfg: dict) -> ProviderSnapshot:
             snap.cost = claude_cost.scan()
         except Exception:
             snap.cost = None
-    if cfg.get("check_status", True):
+    if cfg.get("check_status", True) and cfg.get("_mode") != "offline":
         snap.status = status.statuspage("https://status.claude.com")
+    if snap.status is None:  # keep the Status Page link even without a status check
+        snap.status = StatusInfo(url="https://status.claude.com")
 
     if not path:
         if snap.cost is None:
@@ -85,11 +89,23 @@ def fetch(cfg: dict) -> ProviderSnapshot:
         return snap
 
     headers = dict(HEADERS, Authorization=f"Bearer {token}")
-    try:
-        usage = get_json(f"{API}/usage", headers)
-    except HTTPError as e:
-        snap.error = "Login rejected. Run `claude` to log in again." if e.status in (401, 403) else str(e)
+    mode = cfg.get("_mode", "normal")
+    with apicache.store() as db:
+        res = apicache.get(db, "claude.usage", token, USAGE_TTL, lambda: get_json(f"{API}/usage", headers), mode)
+        prof = apicache.get(db, "claude.profile", token, PROFILE_TTL, lambda: get_json(f"{API}/profile", headers),
+                            "offline" if mode == "offline" else "normal")
+
+    profile = prof.data
+    if profile:
+        snap.account = (profile.get("account") or {}).get("email")
+    snap.plan = _plan_name(oauth, profile)
+    if res.error:
+        snap.error = "Login rejected. Run `claude` to log in again." if res.status in (401, 403) else res.error
+    usage = res.data
+    if usage is None:
+        snap.updated_at = None  # nothing fetched yet
         return snap
+    snap.updated_at = datetime.fromtimestamp(res.fetched_at, tz=timezone.utc)
 
     for api_key, key, label, secs in WINDOWS:
         w = usage.get(api_key)
@@ -105,16 +121,4 @@ def fetch(cfg: dict) -> ProviderSnapshot:
         cur = extra.get("currency") or "USD"
         snap.credits = f"Extra usage: {used:.2f} / {limit / div:.2f} {cur}" if limit else f"Extra usage: {used:.2f} {cur}"
 
-    # Profile (email, plan) changes rarely: cache for an hour.
-    pc = _profile_cache
-    if pc["token"] != token or time.time() - pc["at"] > 3600:
-        try:
-            pc.update(data=get_json(f"{API}/profile", headers), at=time.time(), token=token)
-        except Exception:
-            pass
-    profile = pc["data"]
-    if profile:
-        snap.account = (profile.get("account") or {}).get("email")
-    snap.plan = _plan_name(oauth, profile)
-    snap.updated_at = now()
     return snap

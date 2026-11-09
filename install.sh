@@ -13,11 +13,14 @@ AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/tokenbar.desktop"
 APPLET_ID="io.github.eduardafranca.CosmicAppletTokenBar"
 APPLET_BIN="$HOME/.local/bin/cosmic-applet-tokenbar"
 APPLET_DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/$APPLET_ID.desktop"
+ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+ICON_NAME="io.github.eduardafranca.TokenBar"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
   pkill -f "python3 -m tokenbar" 2>/dev/null || true
   pkill -f "^$APPLET_BIN" 2>/dev/null || true
-  rm -rf "$PREFIX" "$BIN" "$DESKTOP" "$AUTOSTART" "$APPLET_BIN" "$APPLET_DESKTOP"
+  rm -rf "$PREFIX" "$BIN" "$DESKTOP" "$AUTOSTART" "$APPLET_BIN" "$APPLET_DESKTOP" \
+         "$ICONS/scalable/apps/$ICON_NAME.svg" "$ICONS/symbolic/apps/$ICON_NAME-symbolic.svg"
   echo "TokenBar removed. (Config kept in ~/.config/tokenbar)"
   exit 0
 fi
@@ -66,11 +69,15 @@ Type=Application
 Name=TokenBar
 Comment=AI coding plan usage limits and spend
 Exec=$BIN
-Icon=utilities-system-monitor
+Icon=$ICON_NAME
 Categories=Utility;Development;Monitor;
 Keywords=claude;codex;tokens;usage;limits;
 StartupNotify=false
 EOF
+
+install -Dm644 "$SRC/data/icons/$ICON_NAME.svg" "$ICONS/scalable/apps/$ICON_NAME.svg"
+install -Dm644 "$SRC/data/icons/$ICON_NAME-symbolic.svg" "$ICONS/symbolic/apps/$ICON_NAME-symbolic.svg"
+gtk-update-icon-cache -qtf "$ICONS" 2>/dev/null || true
 
 # COSMIC panel applet (Rust): use the prebuilt binary from a release tarball if present,
 # otherwise build it with cargo. Skipped when neither is available.
@@ -120,7 +127,7 @@ if [[ "${1:-}" == "--autostart" ]]; then
 Type=Application
 Name=TokenBar
 Exec=$BIN --hidden
-Icon=utilities-system-monitor
+Icon=$ICON_NAME
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 EOF

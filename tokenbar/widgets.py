@@ -371,8 +371,9 @@ class ProviderCard(Gtk.Box):
 
     def update(self, s: ProviderSnapshot):
         self.name.set_text(s.name)
-        age = (now() - s.updated_at).total_seconds()
-        bits = [s.account or "", f"Updated {fmt_duration(age)} ago" if age >= 60 else "Updated just now"]
+        age = (now() - s.updated_at).total_seconds() if s.updated_at else None
+        updated = "" if age is None else (f"Updated {fmt_duration(age)} ago" if age >= 60 else "Updated just now")
+        bits = [s.account or "", updated]
         self.sub.set_text(" · ".join(b for b in bits if b))
         self.plan.set_text(s.plan or "")
         self.plan.set_visible(bool(s.plan))
