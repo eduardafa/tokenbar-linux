@@ -12,6 +12,7 @@ AI coding plan limits and spend in your Linux panel. A [CodexBar](https://codexb
 
 - **Panel:** the TokenBar icon. Click it for the popup.
 - **Popup:** limits with reset countdowns and pace, spend today and over 30 days, and daily cost by model
+- **Notifications**, like CodexBar's: usage at 80% and 95%, pace warnings ("may run out in 40m, before it resets"), session depleted and restored, limit resets (off by default) and sign-in needed. Each one has its own switch in *Settings*.
 - **Providers:** Claude (Pro/Max, via your Claude Code login) and Codex (via your Codex CLI login)
 
 ## Install
@@ -74,7 +75,7 @@ tokenbar usage                                  # terminal output (--json for sc
 ## Good to know
 
 - **Cost is an estimate:** list-price value of the tokens in Claude Code's local logs on this machine, not your bill.
-- **API calls happen only when you open the popup or press Refresh.** No background polling. Responses are cached for 2 minutes, and when the provider rate-limits, TokenBar backs off and keeps showing the last numbers.
+- **Adaptive refresh, like CodexBar:** every 2 min after you open the popup, then 5, 15 and finally 30 min as you stay away. While Claude Code or Codex is active (their local logs change), it refreshes at least every 5 min. Opening the popup or pressing Refresh fetches immediately. Responses are cached for 2 minutes and shared across panels, and on a rate limit TokenBar backs off and keeps the last numbers. Turn background refresh off in *Settings* to fetch only on click.
 - **Credentials are read-only.** TokenBar reuses existing logins, never refreshes the Claude token, and only talks to the provider APIs and status pages.
 - **"Login expired":** run `claude` once to refresh the token.
 - **Settings:** *Settings…* in the popup, or `~/.config/tokenbar/config.json`.

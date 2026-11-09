@@ -10,11 +10,12 @@ CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "to
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
-    "refresh_seconds": 180,
+    "background_refresh": True,     # adaptive, like CodexBar (see schedule.py)
     "providers": {"claude": True, "codex": True},
     "show_cost": True,
     "check_status": True,
-    "notify_at_percent": [80, 95],  # desktop notifications when a window crosses these
+    "notify_at_percent": [80, 95],  # threshold warnings (% used)
+    "notifications": {"thresholds": True, "pace": True, "depleted": True, "reset": False, "login": True},
 }
 
 

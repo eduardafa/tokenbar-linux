@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from pathlib import Path
 
 import gi
@@ -11,7 +12,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from . import APP_ID, APP_NAME, __version__, config  # noqa: E402
+from . import APP_ID, APP_NAME, __version__, config, notify, schedule  # noqa: E402
 from .models import ProviderSnapshot, fmt_duration, now  # noqa: E402
 from .providers import fetch_all  # noqa: E402
 from .tray import TrayIcon  # noqa: E402
@@ -26,9 +27,22 @@ def _short_reset(w) -> str:
     return " · resets in " + fmt_duration((w.resets_at - now()).total_seconds())
 
 
+def _window_height(wanted: int = 1200, margin: int = 120) -> int:
+    """Tall enough to show a whole provider card without scrolling, capped to the screen."""
+    try:
+        from gi.repository import Gdk
+        monitors = Gdk.Display.get_default().get_monitors()
+        heights = [monitors.get_item(i).get_geometry().height for i in range(monitors.get_n_items())]
+        if heights:
+            return max(640, min(wanted, min(heights) - margin))
+    except Exception:
+        pass
+    return 900
+
+
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app: "TokenBarApp"):
-        super().__init__(application=app, title=APP_NAME, default_width=420, default_height=640)
+        super().__init__(application=app, title=APP_NAME, default_width=440, default_height=_window_height())
         self.app = app
         self.cards: dict[str, ProviderCard] = {}
 
@@ -101,7 +115,8 @@ class TokenBarApp(Adw.Application):
         self.tray: TrayIcon | None = None
         self._timer = 0
         self._loading = False
-        self._notified: dict[str, int] = {}
+        self._last_refresh: float | None = None  # last time we asked the API (not cache-only)
+        self._last_open: float | None = None     # last time the window or tray menu was opened
 
     # ---------- lifecycle ----------
     def do_startup(self):
@@ -117,7 +132,7 @@ class TokenBarApp(Adw.Application):
         self.set_accels_for_action("app.refresh", ["<Ctrl>r", "F5"])
 
         if self.use_tray:
-            self.tray = TrayIcon(APP_ID, APP_NAME, self.toggle_window, on_menu_open=self.refresh)
+            self.tray = TrayIcon(APP_ID, APP_NAME, self.toggle_window, on_menu_open=self._opened)
             try:
                 self.tray.start()
             except Exception as e:  # no session bus / tray host: dashboard still works
@@ -149,7 +164,12 @@ class TokenBarApp(Adw.Application):
             self.window.update(self.snaps)
             self.window.set_loading(self._loading)
         self.window.present()
-        self.refresh()  # opening the window fetches (the backend's 2-minute cache prevents spamming)
+        self._opened()
+
+    def _opened(self):
+        """Window or tray menu opened: fetch now (2-minute cache) and refresh faster for a while."""
+        self._last_open = time.time()
+        self.refresh()
 
     def toggle_window(self):
         if self.window and self.window.get_visible() and self.window.is_active():
@@ -159,11 +179,16 @@ class TokenBarApp(Adw.Application):
 
     # ---------- refresh ----------
     def _schedule(self):
+        """Check once a minute whether an adaptive background refresh is due (see schedule.py)."""
         if self._timer:
             GLib.source_remove(self._timer)
-        secs = max(60, int(self.cfg.get("refresh_seconds", 180)))
-        # Periodic updates only re-read the cache (local logs + last API response): no API calls.
-        self._timer = GLib.timeout_add_seconds(secs, lambda: (self.refresh("offline"), True)[1])
+        self._timer = GLib.timeout_add_seconds(60, lambda: (self._tick(), True)[1])
+
+    def _tick(self):
+        if self.cfg.get("background_refresh", True) and schedule.due(self._last_refresh, self._last_open):
+            self.refresh()
+        else:
+            self.refresh("offline")  # local logs only: keeps today's cost current
 
     def refresh(self, mode: str = "normal"):
         """mode: "offline" (cache only), "normal" (2-minute cache), "force" (manual refresh)."""
@@ -176,18 +201,21 @@ class TokenBarApp(Adw.Application):
 
         def work():
             snaps = fetch_all(cfg, mode)
-            GLib.idle_add(self._apply, snaps)
+            if mode != "offline":
+                notify.evaluate(snaps, cfg)
+            GLib.idle_add(self._apply, snaps, mode)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _apply(self, snaps):
+    def _apply(self, snaps, mode="normal"):
         self._loading = False
+        if mode != "offline":
+            self._last_refresh = time.time()
         self.snaps = snaps
         if self.window:
             self.window.set_loading(False)
             self.window.update(snaps)
         self._update_tray()
-        self._maybe_notify(snaps)
         return False
 
     # ---------- tray ----------
@@ -225,19 +253,6 @@ class TokenBarApp(Adw.Application):
         self.tray.set_menu(items)
         self.tray.set_tooltip(APP_NAME, "\n".join(tip) or "No data yet")
 
-    # ---------- notifications ----------
-    def _maybe_notify(self, snaps):
-        thresholds = sorted(self.cfg.get("notify_at_percent") or [])
-        for s in snaps:
-            for w in s.windows:
-                key = f"{s.id}:{w.key}:{w.resets_at.isoformat() if w.resets_at else ''}"
-                crossed = max((t for t in thresholds if w.used_percent >= t), default=0)
-                if crossed and crossed > self._notified.get(key, 0):
-                    self._notified[key] = crossed
-                    n = Gio.Notification.new(f"{s.name} {w.label.lower()} at {w.used_percent:.0f}%")
-                    n.set_body(f"{w.left_percent:.0f}% left{_short_reset(w)}")
-                    self.send_notification(key, n)
-
     # ---------- dialogs ----------
     def _parent(self):
         if self.window is None or not self.window.get_visible():
@@ -258,11 +273,11 @@ class TokenBarApp(Adw.Application):
 
         general = Adw.PreferencesGroup(title="General")
         page.add(general)
-        interval = Adw.SpinRow.new_with_range(1, 60, 1)
-        interval.set_title("Refresh every (minutes)")
-        interval.set_value(max(60, self.cfg["refresh_seconds"]) // 60)
-        interval.connect("notify::value", lambda r, _p: self._set("refresh_seconds", int(r.get_value()) * 60))
-        general.add(interval)
+        bg = Adw.SwitchRow(title="Background refresh",
+                           subtitle="Adaptive: every 2 min after you look, up to 30 min when idle",
+                           active=self.cfg.get("background_refresh", True))
+        bg.connect("notify::active", lambda r, _p: self._set("background_refresh", r.get_active()))
+        general.add(bg)
 
         login = Adw.SwitchRow(title="Start at login", active=AUTOSTART.exists())
         login.connect("notify::active", lambda r, _p: self._set_autostart(r.get_active()))
@@ -283,19 +298,32 @@ class TokenBarApp(Adw.Application):
             row = Adw.SwitchRow(title=title, subtitle=sub, active=self.cfg.get(key, True))
             row.connect("notify::active", lambda r, _p, key=key: self._set(key, r.get_active()))
             extras.add(row)
-        notify = Adw.SwitchRow(title="Notify at 80% and 95%", active=bool(self.cfg.get("notify_at_percent")))
-        notify.connect("notify::active", lambda r, _p: self._set("notify_at_percent", [80, 95] if r.get_active() else []))
-        extras.add(notify)
+
+        alerts = Adw.PreferencesGroup(title="Notifications",
+                                      description="Need background refresh to arrive while you're not looking")
+        page.add(alerts)
+        kinds = (("thresholds", "Threshold warnings", "When session or weekly usage reaches 80% and 95%"),
+                 ("pace", "Pace warnings", "When the current pace would run out before the limit resets"),
+                 ("depleted", "Session depleted & restored", "When the session hits 0% left, and when it's back"),
+                 ("reset", "Limit resets", "When a session or weekly limit resets"),
+                 ("login", "Sign-in needed", "When a provider login expires"))
+        current = {**notify.DEFAULTS, **(self.cfg.get("notifications") or {})}
+        for key, title, sub in kinds:
+            row = Adw.SwitchRow(title=title, subtitle=sub, active=current[key])
+            row.connect("notify::active", lambda r, _p, key=key: self._set_notification(key, r.get_active()))
+            alerts.add(row)
 
         dlg.present(self._parent())
 
     def _set(self, key, value):
         self.cfg[key] = value
         config.save(self.cfg)
-        if key == "refresh_seconds":
-            self._schedule()
-        else:
+        if key != "background_refresh":
             self.refresh()
+
+    def _set_notification(self, kind, on):
+        self.cfg["notifications"] = {**notify.DEFAULTS, **(self.cfg.get("notifications") or {}), kind: on}
+        config.save(self.cfg)
 
     def _set_provider(self, pid, on):
         self.cfg["providers"][pid] = on
@@ -322,5 +350,12 @@ def run() -> int:
     hidden = "--hidden" in sys.argv
     no_tray = "--no-tray" in sys.argv
     prefs = "--preferences" in sys.argv
-    return TokenBarApp(start_hidden=hidden and not no_tray and not prefs, use_tray=not no_tray,
-                           open_prefs=prefs).run(sys.argv[:1])
+    app = TokenBarApp(start_hidden=hidden and not no_tray and not prefs, use_tray=not no_tray, open_prefs=prefs)
+    if prefs:
+        # If TokenBar is already running, a second launch would only raise its window.
+        # Ask the running instance to open Preferences instead.
+        app.register(None)
+        if app.get_is_remote():
+            app.activate_action("preferences", None)
+            return 0
+    return app.run(sys.argv[:1])

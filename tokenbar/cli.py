@@ -61,6 +61,9 @@ def main(argv=None) -> int:
     mode = u.add_mutually_exclusive_group()
     mode.add_argument("--offline", action="store_true", help="cached data only, no API calls")
     mode.add_argument("--refresh", action="store_true", help="ignore the 2-minute cache")
+    mode.add_argument("--background", action="store_true",
+                      help="scheduled refresh: like the default, but cache-only if background refresh is off")
+    u.add_argument("--notify", action="store_true", help="send desktop notifications for new events")
     sub.add_parser("app", help="run the tray app (default)")
     args = ap.parse_args(argv)
 
@@ -68,7 +71,14 @@ def main(argv=None) -> int:
         cfg = config.load()
         if args.provider:
             cfg["providers"] = {k: k == args.provider for k in ("claude", "codex")}
-        snaps = fetch_all(cfg, "offline" if args.offline else "force" if args.refresh else "normal")
+        if args.offline or (args.background and not cfg.get("background_refresh", True)):
+            mode = "offline"
+        else:
+            mode = "force" if args.refresh else "normal"
+        snaps = fetch_all(cfg, mode)
+        if args.notify and mode != "offline":
+            from .notify import evaluate
+            evaluate(snaps, cfg)
         if args.json:
             print(json.dumps([s.to_dict() for s in snaps if s.available], indent=2))
         else:

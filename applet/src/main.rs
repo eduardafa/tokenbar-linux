@@ -34,6 +34,10 @@ struct Applet {
     error: Option<String>,
     loading: bool,
     updated: Option<Instant>,
+    /// Last API-capable refresh (not cache-only), for the adaptive schedule.
+    last_refresh: Option<Instant>,
+    /// Last time the popup was opened.
+    last_open: Option<Instant>,
     selected: usize,
     metric: Metric,
     day: Option<usize>,
@@ -46,6 +50,7 @@ struct Applet {
 #[derive(Debug, Clone)]
 enum Message {
     TogglePopup(Vector, Rectangle),
+    Tick,
     Refresh,
     Loaded(Result<Vec<Provider>, String>),
     SelectProvider(usize),
@@ -152,6 +157,9 @@ impl Applet {
             return Task::none();
         }
         self.loading = true;
+        if !matches!(mode, Mode::Offline) {
+            self.last_refresh = Some(Instant::now());
+        }
         Task::perform(data::fetch(mode), |r| cosmic::Action::App(Message::Loaded(r)))
     }
 
@@ -180,7 +188,8 @@ impl Applet {
                 Element::from(state.core.applet.popup_container(state.popup_view())).map(cosmic::Action::App)
             })),
         );
-        // Opening the popup is when we talk to the provider APIs.
+        // Opening the popup fetches (2-minute cache) and speeds up background refresh for a while.
+        self.last_open = Some(Instant::now());
         Task::batch([cosmic::task::message(cosmic::Action::Surface(popup)), self.load(Mode::Normal)])
     }
 
@@ -511,6 +520,8 @@ impl cosmic::Application for Applet {
             error: None,
             loading: false,
             updated: None,
+            last_refresh: None,
+            last_open: None,
             selected: 0,
             metric: Metric::Cost,
             day: None,
@@ -524,12 +535,20 @@ impl cosmic::Application for Applet {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none() // no polling: the API is called on click / Refresh only
+        // Check once a minute whether an adaptive background refresh is due (cheap, no I/O).
+        cosmic::iced::time::every(Duration::from_secs(60)).map(|_| Message::Tick)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Refresh => return self.load(Mode::Force),
+            Message::Tick => {
+                let since = |t: Option<Instant>| t.map(|t| t.elapsed().as_secs());
+                let delay = data::refresh_delay(since(self.last_open), data::since_coding_activity());
+                if since(self.last_refresh).is_none_or(|s| s >= delay) {
+                    return self.load(Mode::Background);
+                }
+            }
             Message::TogglePopup(offset, bounds) => {
                 return match self.popup.take() {
                     Some(id) => cosmic::task::message(cosmic::Action::Surface(destroy_popup(id))),
