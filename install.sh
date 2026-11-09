@@ -72,9 +72,12 @@ Keywords=claude;codex;tokens;usage;limits;
 StartupNotify=false
 EOF
 
-# COSMIC panel applet (Rust). Skipped when cargo isn't available.
+# COSMIC panel applet (Rust): use the prebuilt binary from a release tarball if present,
+# otherwise build it with cargo. Skipped when neither is available.
+PREBUILT="$SRC/bin/cosmic-applet-tokenbar"
 CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
-if [[ -x "$CARGO" && -d "$SRC/applet" && "${TOKENBAR_NO_APPLET:-}" != 1 ]]; then
+
+build_applet() {
   # libcosmic needs xkbcommon headers. If libxkbcommon-dev isn't installed, unpack it
   # locally (apt download needs no root); the runtime library is already on the system.
   if ! pkg-config --exists xkbcommon && command -v apt >/dev/null; then
@@ -96,12 +99,18 @@ if [[ -x "$CARGO" && -d "$SRC/applet" && "${TOKENBAR_NO_APPLET:-}" != 1 ]]; then
   fi
   echo "Building COSMIC applet (first build takes a few minutes)..."
   (cd "$SRC/applet" && "$CARGO" build --release --quiet)
-  install -m755 "$SRC/applet/target/release/cosmic-applet-tokenbar" "$APPLET_BIN.new"
+  PREBUILT="$SRC/applet/target/release/cosmic-applet-tokenbar"
+}
+
+if [[ "${TOKENBAR_NO_APPLET:-}" == 1 ]]; then
+  :
+elif [[ -x "$PREBUILT" ]] || { [[ -x "$CARGO" && -d "$SRC/applet/src" ]] && build_applet; }; then
+  install -m755 "$PREBUILT" "$APPLET_BIN.new"
   mv -f "$APPLET_BIN.new" "$APPLET_BIN"   # atomic swap, safe while the panel runs it
   sed "s#@BIN@#$APPLET_BIN#" "$SRC/applet/data/$APPLET_ID.desktop" > "$APPLET_DESKTOP"
   echo "Applet installed. Add it in Settings > Desktop > Panel > Configure panel applets ('TokenBar')."
 else
-  echo "cargo not found: skipping the COSMIC panel applet (tray icon mode still works)."
+  echo "No prebuilt applet and no cargo: skipping the COSMIC panel applet (tray icon mode still works)."
 fi
 
 if [[ "${1:-}" == "--autostart" ]]; then
